@@ -1,22 +1,25 @@
-// "The World in One Day" — 24 November 2026 news poster.
-// Node 22, standard library only. entry.png sits beside this file;
-// this program copies it byte for byte to the output directory
-// the grader provides, so both runs write identical bytes.
+// The World in One Day — Tuesday, 24 November 2026.
+// A tiny Node 22 program, standard library only. The poster image
+// lives next to this file as entry.png, and this program writes an
+// exact copy of it into the directory the grader provides in
+// MAKEFUN_OUTPUT_DIR (or /output when that is not set).
+// Run it like this:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-// The copy is deterministic: the same source bytes go out on every
-// run, with no network, no clock and no randomness involved.
+// Nothing here uses the network, the clock, or any randomness, so
+// running it twice writes the same bytes twice.
 
-import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-const source = new URL('./entry.png', import.meta.url);
-if (!existsSync(source)) {
-  throw new Error('entry.png is missing next to main.ts');
-}
-const target = join(outDir, 'entry.png');
-mkdirSync(outDir, { recursive: true });
-copyFileSync(source, target);
-if (statSync(source).size !== statSync(target).size) {
+const here = dirname(fileURLToPath(import.meta.url));
+const inputPath = join(here, 'entry.png');
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const outputPath = join(outputDir, 'entry.png');
+
+const bytes = readFileSync(inputPath);
+mkdirSync(outputDir, { recursive: true });
+writeFileSync(outputPath, bytes);
+if (readFileSync(outputPath).length !== bytes.length) {
   throw new Error('entry.png was not copied whole');
 }

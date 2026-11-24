@@ -1,224 +1,208 @@
 #!/usr/bin/env python3
-"""Render the Tuesday 24 November 2026 news poster, 1024 by 1024.
+"""Draw Tuesday 24 November 2026 as a one-page newspaper poster.
 
-A navy masthead names the day, then eight white tiles in two columns
-tell the day's stories: the Strait of Hormuz closed after tankers are
-hit, the ICJ genocide verdict on Myanmar, a Gaza strike, a NATO space
-warning, an attack on Zaporizhzhia, a car bomb in Colombia, UK sanctions
-on the Houthis, and an earthquake in Nepal. Every picture is a flat
-shape drawn here with Pillow; there are no photographs and no borrowed
-artwork. The output is deterministic.
-Usage: python3 draw.py  ->  writes entry.png in this folder.
+The page is 1024 square. A dark masthead carries the title and the
+date, and below it eight news cards are arranged in two columns and
+four rows. Each card has a coloured top rule, a place label, a bold
+headline, a short paragraph, and a small geometric mark drawn with
+Pillow primitives. No photograph or borrowed artwork is used anywhere.
+Running this file writes entry.png next to it, and the bytes are the
+same every time it runs.
 """
 
-from PIL import Image, ImageDraw, ImageFont
 import math
+from PIL import Image, ImageDraw, ImageFont
 
-SIZE = 1024
-PAPER = (248, 244, 236)
-DARK = (22, 26, 36)
-NAVY = (16, 36, 64)
-GOLD = (198, 160, 38)
-MUTED = (88, 94, 106)
-CARD = (255, 255, 255)
-EDGE = (208, 203, 188)
+PAGE = 1024
+BACKGROUND = (247, 243, 235)
+INK = (24, 28, 40)
+MASTHEAD = (14, 34, 62)
+ACCENT = (199, 161, 39)
+GREY = (90, 96, 108)
+CARD_FILL = (255, 255, 255)
+CARD_LINE = (210, 205, 190)
+BODY_INK = (54, 60, 72)
 
-DEJAVU = "/usr/share/fonts/truetype/dejavu/"
-BOLD_PATH = DEJAVU + "DejaVuSans-Bold.ttf"
-PLAIN_PATH = DEJAVU + "DejaVuSans.ttf"
+FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
+STRONG = FONT_DIR + "DejaVuSans-Bold.ttf"
+REGULAR = FONT_DIR + "DejaVuSans.ttf"
 
 
-def load(path, size):
+def font(path, size):
     return ImageFont.truetype(path, size)
 
 
-def split_text(canvas, text, face, limit):
-    """Break text into lines that fit inside limit pixels."""
-    out = []
-    for chunk in text.split("\n"):
-        words = chunk.split()
-        if not words:
-            out.append("")
-            continue
-        line = words[0]
-        for word in words[1:]:
-            test = line + " " + word
-            if canvas.textlength(test, font=face) <= limit:
-                line = test
+def wrap(draw, words, face, width):
+    """Wrap words to the given pixel width, returning a list of lines."""
+    lines = []
+    for paragraph in words.split("\n"):
+        current = ""
+        for word in paragraph.split():
+            candidate = word if not current else current + " " + word
+            if draw.textlength(candidate, font=face) <= width:
+                current = candidate
             else:
-                out.append(line)
-                line = word
-        out.append(line)
-    return out
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+    return lines
 
 
-def fit(canvas, text, face, limit, most):
-    """Use the face, shrinking it until the text fits in most lines."""
+def shrink(draw, words, face, width, limit):
+    """Shrink a font until the wrapped text fits in at most limit lines."""
     size = face.size
     while size > 11:
-        face_now = load(face.path, size)
-        got = split_text(canvas, text, face_now, limit)
-        if len(got) <= most:
-            return got, face_now
+        current = font(face.path, size)
+        if len(wrap(draw, words, current, width)) <= limit:
+            return wrap(draw, words, current, width), current
         size -= 1
-    face_now = load(face.path, size)
-    return split_text(canvas, text, face_now, limit), face_now
+    current = font(face.path, size)
+    return wrap(draw, words, current, width), current
 
 
-def emblem(canvas, shape, cx, cy, radius, colour):
-    """Draw one tiny flat emblem from basic shapes."""
-    if shape == "burst":
-        pts = []
+def mark(draw, kind, cx, cy, r, colour):
+    """A small geometric mark: star, drop, globe, shield, flame, bolt."""
+    if kind == "star":
+        points = []
         for i in range(12):
-            ang = -90 + i * 30
-            rad = radius if i % 2 == 0 else radius * 0.5
-            pts.append((cx + rad * math.cos(math.radians(ang)),
-                        cy + rad * math.sin(math.radians(ang))))
-        canvas.polygon(pts, fill=colour)
-    elif shape == "drop":
-        canvas.ellipse([cx - radius * 0.7, cy - radius * 0.4,
-                        cx + radius * 0.7, cy + radius], fill=colour)
-        canvas.polygon([(cx, cy - radius), (cx + radius * 0.7, cy),
-                        (cx - radius * 0.7, cy)], fill=colour)
-    elif shape == "arrow":
-        canvas.line([(cx - radius, cy + radius * 0.5),
-                     (cx - radius * 0.25, cy),
-                     (cx + radius * 0.25, cy + radius * 0.4),
-                     (cx + radius, cy - radius * 0.6)],
-                    fill=colour, width=4, joint="curve")
-    elif shape == "shield":
-        canvas.polygon([(cx - radius * 0.8, cy - radius * 0.6),
-                        (cx + radius * 0.8, cy - radius * 0.6),
-                        (cx + radius * 0.8, cy + radius * 0.2),
-                        (cx, cy + radius),
-                        (cx - radius * 0.8, cy + radius * 0.2)],
-                       fill=colour)
-    elif shape == "globe":
-        canvas.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
-                       outline=colour, width=4)
-        canvas.line([cx - radius, cy, cx + radius, cy], fill=colour, width=3)
-        canvas.arc([cx - radius * 0.5, cy - radius, cx + radius * 0.5,
-                    cy + radius], 270, 90, fill=colour, width=3)
-    elif shape == "bolt":
-        canvas.polygon([(cx + radius * 0.3, cy - radius),
-                        (cx - radius * 0.5, cy + radius * 0.1),
-                        (cx, cy + radius * 0.1),
-                        (cx - radius * 0.3, cy + radius),
-                        (cx + radius * 0.5, cy - radius * 0.1),
-                        (cx, cy - radius * 0.1)], fill=colour)
-    elif shape == "plus":
-        canvas.rectangle([cx - radius * 0.25, cy - radius,
-                          cx + radius * 0.25, cy + radius], fill=colour)
-        canvas.rectangle([cx - radius, cy - radius * 0.25,
-                          cx + radius, cy + radius * 0.25], fill=colour)
-    elif shape == "flame":
-        canvas.polygon([(cx, cy - radius),
-                        (cx + radius * 0.75, cy + radius * 0.2),
-                        (cx + radius * 0.3, cy + radius),
-                        (cx - radius * 0.3, cy + radius),
-                        (cx - radius * 0.75, cy + radius * 0.2)],
-                       fill=colour)
+            angle = math.radians(-90 + i * 30)
+            radius = r if i % 2 == 0 else r * 0.45
+            points.append((cx + radius * math.cos(angle),
+                           cy + radius * math.sin(angle)))
+        draw.polygon(points, fill=colour)
+    elif kind == "drop":
+        draw.ellipse([cx - r * 0.7, cy - r * 0.4, cx + r * 0.7, cy + r],
+                     fill=colour)
+        draw.polygon([(cx, cy - r), (cx + r * 0.7, cy),
+                      (cx - r * 0.7, cy)], fill=colour)
+    elif kind == "globe":
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=colour, width=4)
+        draw.line([cx - r, cy, cx + r, cy], fill=colour, width=3)
+        draw.arc([cx - r * 0.5, cy - r, cx + r * 0.5, cy + r],
+                 270, 90, fill=colour, width=3)
+    elif kind == "shield":
+        draw.polygon([(cx - r * 0.8, cy - r * 0.6), (cx + r * 0.8, cy - r * 0.6),
+                      (cx + r * 0.8, cy + r * 0.2), (cx, cy + r),
+                      (cx - r * 0.8, cy + r * 0.2)], fill=colour)
+    elif kind == "flame":
+        draw.polygon([(cx, cy - r), (cx + r * 0.75, cy + r * 0.2),
+                      (cx + r * 0.3, cy + r), (cx - r * 0.3, cy + r),
+                      (cx - r * 0.75, cy + r * 0.2)], fill=colour)
+    elif kind == "bolt":
+        draw.polygon([(cx + r * 0.3, cy - r), (cx - r * 0.5, cy + r * 0.1),
+                      (cx, cy + r * 0.1), (cx - r * 0.3, cy + r),
+                      (cx + r * 0.5, cy - r * 0.1), (cx, cy - r * 0.1)],
+                     fill=colour)
 
 
-# kicker, headline, body, colour, emblem
-NEWS = [
-    ("STRAIT OF HORMUZ",
-     "Iran says four tankers hit; strait closed further",
-     "Iran says four tankers were hit by mines and the strait stays "
-     "closed until Washington meets Tehran's conditions.",
-     (196, 96, 16), "drop"),
-    ("THE HAGUE  •  ICJ",
-     "Myanmar guilty of genocide against the Rohingya",
-     "The world court rules 9-6 on the 2017 crackdown — the first time "
-     "the UN's highest court has found a state guilty of genocide.",
-     (16, 36, 64), "shield"),
-    ("GAZA",
-     "Israel kills Hamas security chief in Gaza strike",
-     "Brig. Gen. Naeem Abu Nahel is killed in a strike; six others "
-     "are killed with him, reports say.",
-     (176, 32, 32), "burst"),
-    ("SPACE  •  NATO",
-     "NATO vows defence as Russia 'may launch nuclear satellite'",
-     "Mark Rutte warns of a space threat after reports Russia may "
-     "launch a nuclear-armed satellite, dubbed Sputnik-S, in 60 days.",
-     (43, 84, 160), "globe"),
-    ("ZAPORIZHZHIA  •  UKRAINE",
-     "Russian attack kills 2, wounds 40 in Zaporizhzhia",
-     "An overnight strike hits an apartment building; four children "
-     "are among the wounded.",
-     (176, 32, 32), "flame"),
-    ("VILLAVICENCIO  •  COLOMBIA",
-     "Car bomb injures 23 on eve of FARC deal anniversary",
-     "A bomb outside regional government offices wounds 23 people, "
-     "on the eve of the peace deal's 10th anniversary.",
-     (196, 96, 16), "burst"),
-    ("LONDON  •  UK",
-     "UK sanctions Yemen's Houthis and four officials",
-     "Asset freezes and travel bans target the Houthi movement and "
-     "four senior officials.",
-     (31, 120, 74), "shield"),
-    ("KOSHI  •  NEPAL",
-     "Magnitude 5.4 earthquake shakes Nepal",
-     "The quake strikes Koshi Province; tremors are felt across India, "
-     "Bhutan and Bangladesh.",
-     (0, 110, 120), "bolt"),
+STORIES = [
+    {"place": "STRAIT OF HORMUZ",
+     "headline": "Iran says four tankers hit; strait closed further",
+     "text": "Iran says four tankers were hit by mines and the strait "
+             "stays closed until Washington meets Tehran's conditions.",
+     "colour": (196, 96, 16), "mark": "drop"},
+    {"place": "THE HAGUE  •  ICJ",
+     "headline": "Myanmar guilty of genocide against the Rohingya",
+     "text": "The world court rules 9-6 on the 2017 crackdown — the "
+             "first time the UN's highest court has found a state "
+             "guilty of genocide.",
+     "colour": (16, 36, 64), "mark": "shield"},
+    {"place": "GAZA",
+     "headline": "Israel kills Hamas security chief in Gaza strike",
+     "text": "Brig. Gen. Naeem Abu Nahel is killed in a strike; six "
+             "others are killed with him, reports say.",
+     "colour": (176, 32, 32), "mark": "star"},
+    {"place": "SPACE  •  NATO",
+     "headline": "NATO vows defence as Russia 'may launch nuclear satellite'",
+     "text": "Mark Rutte warns of a space threat after reports Russia "
+             "may launch a nuclear-armed satellite, dubbed Sputnik-S, "
+             "in 60 days.",
+     "colour": (43, 84, 160), "mark": "globe"},
+    {"place": "ZAPORIZHZHIA  •  UKRAINE",
+     "headline": "Russian attack kills 2, wounds 40 in Zaporizhzhia",
+     "text": "An overnight strike hits an apartment building; four "
+             "children are among the wounded.",
+     "colour": (176, 32, 32), "mark": "flame"},
+    {"place": "VILLAVICENCIO  •  COLOMBIA",
+     "headline": "Car bomb injures 23 on eve of FARC deal anniversary",
+     "text": "A bomb outside regional government offices wounds 23 "
+             "people, on the eve of the peace deal's 10th anniversary.",
+     "colour": (196, 96, 16), "mark": "star"},
+    {"place": "LONDON  •  UK",
+     "headline": "UK sanctions Yemen's Houthis and four officials",
+     "text": "Asset freezes and travel bans target the Houthi movement "
+             "and four senior officials.",
+     "colour": (31, 120, 74), "mark": "shield"},
+    {"place": "KOSHI  •  NEPAL",
+     "headline": "Magnitude 5.4 earthquake shakes Nepal",
+     "text": "The quake strikes Koshi Province; tremors are felt across "
+             "India, Bhutan and Bangladesh.",
+     "colour": (0, 110, 120), "mark": "bolt"},
 ]
 
 
-def build():
-    pic = Image.new("RGB", (SIZE, SIZE), PAPER)
-    pen = ImageDraw.Draw(pic)
+def render():
+    page = Image.new("RGB", (PAGE, PAGE), BACKGROUND)
+    draw = ImageDraw.Draw(page)
 
-    pen.rectangle([0, 0, SIZE, 150], fill=NAVY)
-    pen.rectangle([0, 150, SIZE, 156], fill=GOLD)
-    head = load(BOLD_PATH, 50)
-    words = "THE WORLD IN ONE DAY"
-    pen.text(((SIZE - pen.textlength(words, font=head)) / 2, 20),
-             words, font=head, fill=(255, 255, 255))
-    day = load(BOLD_PATH, 33)
-    when = "TUESDAY, 24 NOVEMBER 2026"
-    pen.text(((SIZE - pen.textlength(when, font=day)) / 2, 82),
-             when, font=day, fill=(255, 214, 90))
-    note = load(PLAIN_PATH, 20)
-    tag = "Eight stories from around the world  •  Tuesday's news, in one picture"
-    pen.text(((SIZE - pen.textlength(tag, font=note)) / 2, 122),
-             tag, font=note, fill=(198, 208, 224))
+    draw.rectangle([0, 0, PAGE, 150], fill=MASTHEAD)
+    draw.rectangle([0, 150, PAGE, 156], fill=ACCENT)
+    title_face = font(STRONG, 50)
+    title = "THE WORLD IN ONE DAY"
+    draw.text(((PAGE - draw.textlength(title, font=title_face)) / 2, 20),
+              title, font=title_face, fill=(255, 255, 255))
+    date_face = font(STRONG, 33)
+    date = "TUESDAY, 24 NOVEMBER 2026"
+    draw.text(((PAGE - draw.textlength(date, font=date_face)) / 2, 82),
+              date, font=date_face, fill=(255, 214, 90))
+    sub_face = font(REGULAR, 20)
+    subtitle = "Eight stories from around the world  •  Tuesday's news, in one picture"
+    draw.text(((PAGE - draw.textlength(subtitle, font=sub_face)) / 2, 122),
+              subtitle, font=sub_face, fill=(198, 208, 224))
 
-    margin, gap = 20, 16
-    top, base = 172, 984
-    wide = (SIZE - 2 * margin - gap) // 2
-    tall = (base - top - 3 * gap) // 4
-    kick = load(BOLD_PATH, 18)
-    head_f = load(BOLD_PATH, 26)
-    body_f = load(PLAIN_PATH, 20)
+    margin = 20
+    spacing = 16
+    grid_top = 172
+    grid_bottom = 984
+    card_w = (PAGE - 2 * margin - spacing) // 2
+    card_h = (grid_bottom - grid_top - 3 * spacing) // 4
+    label_face = font(STRONG, 18)
+    title_face = font(STRONG, 26)
+    text_face = font(REGULAR, 20)
 
-    for pos, (kicker, title, body, colour, shape) in enumerate(NEWS):
-        col, row = pos % 2, pos // 2
-        x = margin + col * (wide + gap)
-        y = top + row * (tall + gap)
-        pen.rounded_rectangle([x, y, x + wide, y + tall], radius=10,
-                              fill=CARD, outline=EDGE, width=1)
-        pen.rectangle([x, y, x + wide, y + 6], fill=colour)
-        emblem(pen, shape, x + wide - 34, y + 36, 16, colour)
-        pen.text((x + 16, y + 20), kicker, font=kick, fill=colour)
-        lines, face = fit(pen, title, head_f, wide - 32, 2)
-        yy = y + 50
-        for line in lines:
-            pen.text((x + 16, yy), line, font=face, fill=DARK)
-            yy += face.size + 4
-        blines, bface = fit(pen, body, body_f, wide - 32, 3)
-        yy += 6
-        for line in blines:
-            pen.text((x + 16, yy), line, font=bface, fill=(52, 58, 70))
-            yy += bface.size + 5
+    for index, story in enumerate(STORIES):
+        column = index % 2
+        row = index // 2
+        x = margin + column * (card_w + spacing)
+        y = grid_top + row * (card_h + spacing)
+        colour = story["colour"]
+        draw.rounded_rectangle([x, y, x + card_w, y + card_h], radius=10,
+                               fill=CARD_FILL, outline=CARD_LINE, width=1)
+        draw.rectangle([x, y, x + card_w, y + 6], fill=colour)
+        mark(draw, story["mark"], x + card_w - 34, y + 36, 16, colour)
+        draw.text((x + 16, y + 20), story["place"], font=label_face, fill=colour)
+        headline_lines, headline_face = shrink(
+            draw, story["headline"], title_face, card_w - 32, 2)
+        cursor = y + 50
+        for line in headline_lines:
+            draw.text((x + 16, cursor), line, font=headline_face, fill=INK)
+            cursor += headline_face.size + 4
+        body_lines, body_face = shrink(
+            draw, story["text"], text_face, card_w - 32, 3)
+        cursor += 6
+        for line in body_lines:
+            draw.text((x + 16, cursor), line, font=body_face, fill=BODY_INK)
+            cursor += body_face.size + 5
 
-    foot = load(PLAIN_PATH, 15)
+    credit_face = font(REGULAR, 15)
     credit = "Sources: Reuters, BBC, ICJ, The Statesman  •  24 November 2026"
-    pen.text(((SIZE - pen.textlength(credit, font=foot)) / 2, 992),
-             credit, font=foot, fill=MUTED)
+    draw.text(((PAGE - draw.textlength(credit, font=credit_face)) / 2, 992),
+              credit, font=credit_face, fill=GREY)
 
-    pic.save("entry.png", format="PNG", optimize=True)
+    page.save("entry.png", format="PNG", optimize=True)
 
 
 if __name__ == "__main__":
-    build()
+    render()
